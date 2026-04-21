@@ -33,6 +33,13 @@ export const api = {
   deleteTable: (id) => request(`/tables/${id}`, { method: 'DELETE' }),
   getTableQR: (id) => request(`/tables/${id}/qr`),
   getAllQR: () => request('/tables/qr/all'),
+  startTableSession: (id) => request(`/tables/${id}/session`, { method: 'POST' }),
+  resetTableSession: (id) => request(`/tables/${id}/session/reset`, { method: 'POST' }),
+  getSessionTimeoutSettings: () => request('/tables/settings/session-timeout'),
+  updateSessionTimeoutSettings: (session_timeout_minutes) => request('/tables/settings/session-timeout', {
+    method: 'PUT',
+    body: JSON.stringify({ session_timeout_minutes })
+  }),
 
   // Orders
   getOrders: (params = '') => request(`/orders${params ? '?' + params : ''}`),

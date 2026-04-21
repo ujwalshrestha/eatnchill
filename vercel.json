@@ -5,11 +5,21 @@
       "src": "server/index.js",
       "use": "@vercel/node",
       "config": {
-        "includeFiles": ["../legacy_dump.sql", "../client/dist/**"]
+        "includeFiles": ["../legacy_dump.sql"]
+      }
+    },
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "client/dist"
       }
     }
   ],
   "routes": [
-    { "src": "/(.*)", "dest": "server/index.js" }
+    { "src": "/api/(.*)", "dest": "server/index.js" },
+    { "src": "/uploads/(.*)", "dest": "server/index.js" },
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }

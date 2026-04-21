@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
 import { useToast } from '../components/Toast';
 
-export default function Menu({ table, onOrderPlaced }) {
+export default function Menu({ table, session, ensureSession, onOrderPlaced }) {
   const [categories, setCategories] = useState([]);
   const [foodItems, setFoodItems] = useState([]);
   const [activeCategory, setActiveCategory] = useState(null);
@@ -103,8 +103,10 @@ export default function Menu({ table, onOrderPlaced }) {
     if (cart.length === 0) return;
     setPlacingOrder(true);
     try {
+      const activeSession = session?.id ? session : await ensureSession();
       const res = await api.createOrder({
         table_id: table.id,
+        session_id: activeSession.id,
         customer_name: customerName,
         items: cart.map(i => ({
           food_item_id: i.food_item_id,

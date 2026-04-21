@@ -6,6 +6,9 @@ import Modal from '../components/Modal'
 export default function Tables() {
   const [tables, setTables] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [sessionTimeout, setSessionTimeout] = useState(15);
+  const [savingTimeout, setSavingTimeout] = useState(false);
+  const [resettingTableId, setResettingTableId] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ table_number: '', seats: 4, is_active: 1 });
@@ -17,10 +20,29 @@ export default function Tables() {
 
   async function loadTables() {
     try {
-      const res = await api.getTables();
-      setTables(res.data);
+      const [tablesRes, settingsRes] = await Promise.all([
+        api.getTables(),
+        api.getSessionTimeoutSettings(),
+      ]);
+      setTables(tablesRes.data);
+      setSessionTimeout(settingsRes.data.session_timeout_minutes);
     } catch (err) { toast(err.message, 'error'); }
     finally { setLoading(false); }
+  }
+
+  async function saveSessionTimeout() {
+    try {
+      setSavingTimeout(true);
+      const minutes = parseInt(sessionTimeout, 10);
+      const res = await api.updateSessionTimeoutSettings(minutes);
+      setSessionTimeout(res.data.session_timeout_minutes);
+      toast('Session timeout updated!');
+      loadTables();
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      setSavingTimeout(false);
+    }
   }
 
   function openAdd() {
@@ -67,12 +89,35 @@ export default function Tables() {
     } catch (err) { toast(err.message, 'error'); }
   }
 
+  async function resetSession(table) {
+    try {
+      setResettingTableId(table.id);
+      const res = await api.resetTableSession(table.id);
+      toast(res.message || `Session reset for ${table.table_number}`);
+      loadTables();
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      setResettingTableId(null);
+    }
+  }
+
   function downloadQR() {
     if (!qrData) return;
     const a = document.createElement('a');
     a.href = qrData.qr_code;
     a.download = `QR-Table-${qrData.table_number}.png`;
     a.click();
+  }
+
+  function formatSessionExpiry(value) {
+    if (!value) return 'No active session';
+    return new Date(value).toLocaleString([], {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
   }
 
   if (loading) return <div className="loading"><div className="spinner" /></div>;
@@ -82,6 +127,32 @@ export default function Tables() {
       <div className="page-header">
         <h2>Tables ({tables.length})</h2>
         <button className="btn btn-primary" onClick={openAdd}>+ Add Table</button>
+      </div>
+
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <div>
+            <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>Table Session Timeout</h3>
+            <p style={{ color: 'var(--admin-text-secondary)', fontSize: 14 }}>
+              When a table stays inactive for this many minutes, the next scan can start a fresh session on the same QR.
+            </p>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <input
+              className="form-input"
+              type="number"
+              min="1"
+              max="240"
+              value={sessionTimeout}
+              onChange={e => setSessionTimeout(e.target.value)}
+              style={{ width: 110 }}
+            />
+            <span style={{ color: 'var(--admin-text-secondary)', fontSize: 14 }}>minutes</span>
+            <button className="btn btn-primary" onClick={saveSessionTimeout} disabled={savingTimeout}>
+              {savingTimeout ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </div>
       </div>
 
       {tables.length === 0 ? (
@@ -115,9 +186,42 @@ export default function Tables() {
                 </div>
               )}
 
+              {table.current_session_id ? (
+                <div style={{
+                  padding: '8px 12px',
+                  background: 'rgba(0,230,118,0.08)',
+                  borderRadius: 'var(--radius-sm)',
+                  marginBottom: 12,
+                  fontSize: 13,
+                  color: 'var(--accent-emerald)',
+                  fontWeight: 600
+                }}>
+                  Session active until {formatSessionExpiry(table.current_session_expires_at)}
+                </div>
+              ) : (
+                <div style={{
+                  padding: '8px 12px',
+                  background: 'rgba(255,255,255,0.04)',
+                  borderRadius: 'var(--radius-sm)',
+                  marginBottom: 12,
+                  fontSize: 13,
+                  color: 'var(--admin-text-secondary)',
+                  fontWeight: 600
+                }}>
+                  No active session
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button className="btn btn-sm btn-secondary" onClick={() => showQR(table)}>📱 QR Code</button>
                 <button className="btn btn-sm btn-secondary" onClick={() => openEdit(table)}>✏️ Edit</button>
+                <button
+                  className="btn btn-sm btn-secondary"
+                  onClick={() => resetSession(table)}
+                  disabled={!table.current_session_id || resettingTableId === table.id}
+                >
+                  {resettingTableId === table.id ? 'Resetting...' : '♻️ Reset Session'}
+                </button>
                 <button className="btn btn-sm btn-danger" onClick={() => setDeleteId(table.id)}>🗑️</button>
               </div>
             </div>

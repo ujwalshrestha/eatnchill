@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
+import { DEFAULT_SESSION_TIMEOUT_MINUTES } from './sessionService.js';
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -104,16 +105,30 @@ export async function initDatabase() {
       is_active INTEGER DEFAULT 1,
       created_at TEXT DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS table_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      table_id INTEGER NOT NULL,
+      status TEXT DEFAULT 'active',
+      started_at TEXT DEFAULT (datetime('now')),
+      last_activity_at TEXT DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL,
+      closed_at TEXT DEFAULT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (table_id) REFERENCES tables_config(id) ON DELETE CASCADE
+    );
     CREATE TABLE IF NOT EXISTS orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       table_id INTEGER NOT NULL,
+      session_id INTEGER,
       status TEXT DEFAULT 'pending',
       total_amount REAL DEFAULT 0,
       customer_name TEXT DEFAULT '',
       notes TEXT DEFAULT '',
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (table_id) REFERENCES tables_config(id)
+      FOREIGN KEY (table_id) REFERENCES tables_config(id),
+      FOREIGN KEY (session_id) REFERENCES table_sessions(id)
     );
     CREATE TABLE IF NOT EXISTS order_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -148,7 +163,26 @@ export async function initDatabase() {
       password TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_table_sessions_table_status ON table_sessions(table_id, status);
   `);
+
+  const orderColumns = await wrapper.prepare('PRAGMA table_info(orders)').all();
+  if (!orderColumns.some((column) => column.name === 'session_id')) {
+    await wrapper.exec('ALTER TABLE orders ADD COLUMN session_id INTEGER;');
+  }
+
+  await wrapper.exec('CREATE INDEX IF NOT EXISTS idx_orders_session_id ON orders(session_id);');
+
+  await wrapper.prepare(`
+    INSERT OR IGNORE INTO app_settings (key, value)
+    VALUES (?, ?)
+  `).run('session_timeout_minutes', String(DEFAULT_SESSION_TIMEOUT_MINUTES));
 
   console.log('✅ Database initialized using @libsql/client');
   await seedDemoData();
@@ -214,9 +248,18 @@ async function seedFromLegacySQL() {
     return cols.map(c => c.replace(/^'|'$/g, '').replace(/\\'/g, "'"));
   }
 
-  const legacyCategories = getInsertValues('categories');
-  const legacyProducts = getInsertValues('products');
-  const legacyOptions = getInsertValues('product_variants');
+  const legacyCategories = [
+    ...getInsertValues('category'),
+    ...getInsertValues('categories'),
+  ];
+  const legacyProducts = [
+    ...getInsertValues('product'),
+    ...getInsertValues('products'),
+  ];
+  const legacyOptions = [
+    ...getInsertValues('product_option'),
+    ...getInsertValues('product_variants'),
+  ];
   const legacyAdmin = getInsertValues('admin_login');
 
   const adminQuery = await wrapper.prepare('SELECT COUNT(*) as cnt FROM admin').get();
@@ -231,8 +274,21 @@ async function seedFromLegacySQL() {
 
   const legacyCatMapping = {}; 
   for (const row of legacyCategories) {
-    const [c_id, image, name, parent] = row;
-    const res = await wrapper.prepare('INSERT INTO categories (name, description, sort_order) VALUES (?, ?, ?)').run(name, '', 0);
+    let c_id;
+    let name;
+    let sortOrder = 0;
+
+    if (row.length >= 3) {
+      [c_id, name, sortOrder] = row;
+    } else {
+      [c_id, , name] = row;
+    }
+
+    if (!name) continue;
+
+    const res = await wrapper.prepare(
+      'INSERT INTO categories (name, description, sort_order) VALUES (?, ?, ?)'
+    ).run(name, '', parseInt(sortOrder, 10) || 0);
     legacyCatMapping[c_id] = res.lastInsertRowid;
   }
   console.log(`✅ Imported ${legacyCategories.length} categories.`);
@@ -241,7 +297,21 @@ async function seedFromLegacySQL() {
   const productOldToNewId = {};
 
   for (const row of legacyProducts) {
-    const [p_id, title, img, price, code, info, cat_id] = row;
+    let p_id;
+    let cat_id;
+    let title;
+    let info;
+    let price;
+    let img;
+
+    if (row.length >= 8) {
+      [p_id, cat_id, title, info, , price, , img] = row;
+    } else {
+      [p_id, title, img, price, , info, cat_id] = row;
+    }
+
+    if (!title) continue;
+
     let newCatId = legacyCatMapping[cat_id];
 
     if (!newCatId) {
@@ -255,7 +325,7 @@ async function seedFromLegacySQL() {
     const priceVal = parseFloat(price) || 0;
     const res = await wrapper.prepare(
       'INSERT INTO food_items (category_id, name, description, price, image_url, sort_order) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(newCatId, title, info || '', priceVal, '', 0);
+    ).run(newCatId, title, info || '', priceVal, img || '', 0);
     
     productOldToNewId[p_id] = res.lastInsertRowid;
   }
@@ -264,7 +334,7 @@ async function seedFromLegacySQL() {
   for (const row of legacyOptions) {
     const [v_id, prod_id, title, priceStr] = row;
     const newProdId = productOldToNewId[prod_id];
-    if (newProdId) {
+    if (newProdId && title) {
       const optPrice = parseFloat(priceStr) || 0;
       await wrapper.prepare('INSERT INTO item_options (food_item_id, name, price) VALUES (?, ?, ?)').run(newProdId, title, optPrice);
     }

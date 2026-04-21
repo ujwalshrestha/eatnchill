@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getDb } from '../database.js';
 import { AppError, asyncHandler } from '../middleware/errorHandler.js';
+import { ensureTableSession, touchSession, validateSessionForTable } from '../sessionService.js';
 
 const router = Router();
 
@@ -26,7 +27,7 @@ router.get('/stream', (req, res) => {
 
 router.get('/', asyncHandler(async (req, res) => {
   const db = getDb();
-  const { status, table_id, date, limit = 50 } = req.query;
+  const { status, table_id, session_id, date, limit = 50 } = req.query;
 
   let query = 'SELECT o.*, t.table_number FROM orders o LEFT JOIN tables_config t ON t.id = o.table_id';
   const conditions = [];
@@ -34,6 +35,7 @@ router.get('/', asyncHandler(async (req, res) => {
 
   if (status) { conditions.push('o.status = ?'); params.push(status); }
   if (table_id) { conditions.push('o.table_id = ?'); params.push(parseInt(table_id)); }
+  if (session_id) { conditions.push('o.session_id = ?'); params.push(parseInt(session_id)); }
   if (date) { conditions.push("date(o.created_at) = date(?)"); params.push(date); }
 
   if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
@@ -86,17 +88,27 @@ async function getOrderItemsWithDetails(db, orderId) {
 
 router.post('/', asyncHandler(async (req, res) => {
   const db = getDb();
-  const { table_id, customer_name = '', notes = '', items } = req.body;
+  const { table_id, session_id, customer_name = '', notes = '', items } = req.body;
 
   if (!table_id) throw new AppError('Table ID is required');
   if (!items || !Array.isArray(items) || items.length === 0) throw new AppError('At least one item is required');
   if (items.length === 0) throw new AppError('No items in order');
 
+  const tableId = parseInt(table_id);
+  let activeSession;
+  if (session_id) {
+    activeSession = await validateSessionForTable(db, parseInt(session_id), tableId);
+    activeSession = await touchSession(db, activeSession.id);
+  } else {
+    const ensured = await ensureTableSession(db, tableId);
+    activeSession = ensured.session;
+  }
+
   const orderResult = await db.transaction(async (txDb) => {
     // 1. Create order
     const result = await txDb.prepare(
-      'INSERT INTO orders (table_id, customer_name, notes, status) VALUES (?, ?, ?, ?)'
-    ).run(table_id, customer_name, notes, 'pending');
+      'INSERT INTO orders (table_id, session_id, customer_name, notes, status) VALUES (?, ?, ?, ?, ?)'
+    ).run(tableId, activeSession.id, customer_name, notes, 'pending');
     
     const orderId = result.lastInsertRowid;
     let totalAmount = 0;
@@ -139,15 +151,20 @@ router.post('/', asyncHandler(async (req, res) => {
     await txDb.prepare('UPDATE orders SET total_amount = ? WHERE id = ?').run(totalAmount, orderId);
 
     // 4. Get table number for broadcasting
-    const table = await txDb.prepare('SELECT table_number FROM tables_config WHERE id = ?').get(table_id);
+    const table = await txDb.prepare('SELECT table_number FROM tables_config WHERE id = ?').get(tableId);
 
-    return { orderId, tableNumber: table?.table_number, totalAmount };
+    return { orderId, tableNumber: table?.table_number, totalAmount, sessionId: activeSession.id };
   });
 
   const newOrder = await db.prepare('SELECT * FROM orders WHERE id = ?').get(orderResult.orderId);
   const itemsWithDetails = await getOrderItemsWithDetails(db, orderResult.orderId);
   
-  const fullOrder = { ...newOrder, table_number: orderResult.tableNumber, items: itemsWithDetails };
+  const fullOrder = {
+    ...newOrder,
+    session_id: orderResult.sessionId,
+    table_number: orderResult.tableNumber,
+    items: itemsWithDetails,
+  };
 
   broadcastOrder({ type: 'new_order', order: fullOrder });
   res.status(201).json({ success: true, data: fullOrder });

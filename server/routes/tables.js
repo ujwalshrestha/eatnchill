@@ -2,18 +2,52 @@ import { Router } from 'express';
 import QRCode from 'qrcode';
 import { getDb } from '../database.js';
 import { AppError, asyncHandler } from '../middleware/errorHandler.js';
+import {
+  cleanupExpiredSessions,
+  closeSession,
+  ensureTableSession,
+  getCurrentSessionForTable,
+  getSessionTimeoutMinutes,
+  setSessionTimeoutMinutes,
+} from '../sessionService.js';
 
 const router = Router();
 
-const getBaseUrl = () => process.env.CLIENT_URL || 'http://localhost:5173';
+function normalizeBaseUrl(url) {
+  return url ? url.replace(/\/$/, '') : null;
+}
+
+function getBaseUrl(req) {
+  const configuredUrl = normalizeBaseUrl(process.env.CLIENT_URL);
+  if (configuredUrl) return configuredUrl;
+
+  const origin = normalizeBaseUrl(req.get('origin'));
+  if (origin) return origin;
+
+  const forwardedHost = req.headers['x-forwarded-host'];
+  const host = (Array.isArray(forwardedHost) ? forwardedHost[0] : forwardedHost) || req.get('host');
+
+  if (host === 'localhost:3001' || host === '127.0.0.1:3001') {
+    return 'http://localhost:5173';
+  }
+
+  const forwardedProto = req.headers['x-forwarded-proto'];
+  const proto = (Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto) || req.protocol || 'http';
+
+  return normalizeBaseUrl(`${proto}://${host}`) || 'http://localhost:5173';
+}
 
 router.get('/qr/all', asyncHandler(async (req, res) => {
   const db = getDb();
-  const tables = await db.prepare('SELECT * FROM tables_config WHERE is_active = 1 ORDER BY table_number ASC').all();
+  const tables = await db.prepare(`
+    SELECT * FROM tables_config
+    WHERE is_active = 1
+    ORDER BY LENGTH(table_number) ASC, table_number ASC
+  `).all();
 
   const qrCodes = await Promise.all(
     tables.map(async (table) => {
-      const url = `${getBaseUrl()}/table/${table.id}`;
+      const url = `${getBaseUrl(req)}/table/${table.id}`;
       const qrDataUrl = await QRCode.toDataURL(url, {
         width: 400, margin: 2,
         color: { dark: '#1a1a2e', light: '#ffffff' },
@@ -26,22 +60,97 @@ router.get('/qr/all', asyncHandler(async (req, res) => {
   res.json({ success: true, data: qrCodes });
 }));
 
+router.get('/settings/session-timeout', asyncHandler(async (req, res) => {
+  const db = getDb();
+  const timeoutMinutes = await getSessionTimeoutMinutes(db);
+  res.json({ success: true, data: { session_timeout_minutes: timeoutMinutes } });
+}));
+
+router.put('/settings/session-timeout', asyncHandler(async (req, res) => {
+  const db = getDb();
+  const timeoutMinutes = await setSessionTimeoutMinutes(db, req.body.session_timeout_minutes);
+  res.json({ success: true, data: { session_timeout_minutes: timeoutMinutes } });
+}));
+
 router.get('/', asyncHandler(async (req, res) => {
   const db = getDb();
+  await cleanupExpiredSessions(db);
+
+  const timeoutMinutes = await getSessionTimeoutMinutes(db);
   const tables = await db.prepare(`
     SELECT t.*,
-      (SELECT COUNT(*) FROM orders o WHERE o.table_id = t.id AND o.status IN ('pending', 'preparing')) as active_orders
+      (SELECT COUNT(*) FROM orders o WHERE o.table_id = t.id AND o.status IN ('pending', 'preparing', 'ready')) as active_orders
     FROM tables_config t
-    ORDER BY t.table_number ASC
+    ORDER BY LENGTH(t.table_number) ASC, t.table_number ASC
   `).all();
-  res.json({ success: true, data: tables });
+
+  const tablesWithSessions = await Promise.all(tables.map(async (table) => {
+    const currentSession = await getCurrentSessionForTable(db, table.id);
+    return {
+      ...table,
+      current_session_id: currentSession?.id || null,
+      current_session_status: currentSession?.status || null,
+      current_session_started_at: currentSession?.started_at || null,
+      current_session_expires_at: currentSession?.expires_at || null,
+      session_timeout_minutes: timeoutMinutes,
+    };
+  }));
+
+  res.json({ success: true, data: tablesWithSessions });
 }));
 
 router.get('/:id', asyncHandler(async (req, res) => {
   const db = getDb();
+  await cleanupExpiredSessions(db);
   const table = await db.prepare('SELECT * FROM tables_config WHERE id = ?').get(parseInt(req.params.id));
   if (!table) throw new AppError('Table not found', 404);
-  res.json({ success: true, data: table });
+
+  const timeoutMinutes = await getSessionTimeoutMinutes(db);
+  const currentSession = await getCurrentSessionForTable(db, table.id);
+
+  res.json({
+    success: true,
+    data: {
+      ...table,
+      current_session_id: currentSession?.id || null,
+      current_session_status: currentSession?.status || null,
+      current_session_started_at: currentSession?.started_at || null,
+      current_session_expires_at: currentSession?.expires_at || null,
+      session_timeout_minutes: timeoutMinutes,
+    },
+  });
+}));
+
+router.post('/:id/session', asyncHandler(async (req, res) => {
+  const db = getDb();
+  const tableId = parseInt(req.params.id);
+  const { session, timeoutMinutes, created } = await ensureTableSession(db, tableId);
+
+  res.json({
+    success: true,
+    data: {
+      ...session,
+      timeout_minutes: timeoutMinutes,
+      created,
+    },
+  });
+}));
+
+router.post('/:id/session/reset', asyncHandler(async (req, res) => {
+  const db = getDb();
+  const tableId = parseInt(req.params.id);
+  const table = await db.prepare('SELECT * FROM tables_config WHERE id = ?').get(tableId);
+  if (!table) throw new AppError('Table not found', 404);
+
+  const currentSession = await getCurrentSessionForTable(db, tableId);
+  if (currentSession) {
+    await closeSession(db, currentSession.id, 'closed');
+  }
+
+  res.json({
+    success: true,
+    message: currentSession ? 'Table session reset.' : 'No active session to reset.',
+  });
 }));
 
 router.post('/', asyncHandler(async (req, res) => {
@@ -103,7 +212,7 @@ router.get('/:id/qr', asyncHandler(async (req, res) => {
   const table = await db.prepare('SELECT * FROM tables_config WHERE id = ?').get(parseInt(req.params.id));
   if (!table) throw new AppError('Table not found', 404);
 
-  const url = `${getBaseUrl()}/table/${table.id}`;
+  const url = `${getBaseUrl(req)}/table/${table.id}`;
 
   const qrDataUrl = await QRCode.toDataURL(url, {
     width: 400, margin: 2,

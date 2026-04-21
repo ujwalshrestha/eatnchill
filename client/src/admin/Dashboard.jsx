@@ -30,7 +30,7 @@ export default function Dashboard() {
       setStats({
         ...txRes.data.summary,
         totalTables: tablesRes.data.length,
-        activeTables: tablesRes.data.filter(t => t.active_orders > 0).length,
+        activeTables: tablesRes.data.filter(t => t.current_session_status === 'active').length,
         totalCategories: categoriesRes.data.length,
         totalItems: categoriesRes.data.reduce((sum, c) => sum + (c.item_count || 0), 0),
       });
