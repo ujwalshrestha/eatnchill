@@ -6,3 +6,5 @@ build/
 server/data/*.db
 !server/data/.gitkeep
 # legacy_dump.sql removed from ignore for Vercel seeding
+.vercel
+.env*.local

@@ -58,11 +58,18 @@ class DBWrapper {
 }
 
 export async function initDatabase() {
-  const url = process.env.TURSO_DATABASE_URL || `file:${join(__dirname, 'data', 'restaurant.db')}`;
+  const localDbPath = process.env.VERCEL === '1'
+    ? join('/tmp', 'restaurant.db')
+    : join(__dirname, 'data', 'restaurant.db');
+  const url = process.env.TURSO_DATABASE_URL || `file:${localDbPath}`;
   const authToken = process.env.TURSO_AUTH_TOKEN;
 
-  if (url.startsWith('file:') && !fs.existsSync(join(__dirname, 'data'))) {
-    fs.mkdirSync(join(__dirname, 'data'), { recursive: true });
+  if (url.startsWith('file:')) {
+    const dbPath = url.slice('file:'.length);
+    const dbDir = dirname(dbPath);
+    if (!fs.existsSync(dbDir)) {
+      fs.mkdirSync(dbDir, { recursive: true });
+    }
   }
 
   const client = createClient({ url, authToken });
@@ -268,12 +275,16 @@ async function seedFromLegacySQL() {
 async function seedDemoData() {
   await seedFromLegacySQL();
 
-  const count = await wrapper.prepare('SELECT COUNT(*) as cnt FROM tables_config').get();
-  if (count && count.cnt === 0) {
-    for (let i = 1; i <= 6; i++) {
-       await wrapper.prepare('INSERT INTO tables_config (table_number, seats) VALUES (?, ?)').run(`T${i}`, 4);
-    }
-    console.log('✅ Default tables seeded.');
+  let insertedTables = 0;
+  for (let i = 1; i <= 19; i++) {
+    const result = await wrapper.prepare(
+      'INSERT OR IGNORE INTO tables_config (table_number, seats) VALUES (?, ?)'
+    ).run(`T${i}`, 4);
+    insertedTables += result.changes || 0;
+  }
+
+  if (insertedTables > 0) {
+    console.log(`✅ Added ${insertedTables} missing default tables.`);
   }
 
   const adminQuery = await wrapper.prepare('SELECT COUNT(*) as cnt FROM admin').get();

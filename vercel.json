@@ -1,29 +1,15 @@
 {
   "version": 2,
-  "cleanUrls": true,
   "builds": [
     {
       "src": "server/index.js",
       "use": "@vercel/node",
       "config": {
-        "includeFiles": ["../legacy_dump.sql"]
-      }
-    },
-    {
-      "src": "client/package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "distDir": "dist"
+        "includeFiles": ["../legacy_dump.sql", "../client/dist/**"]
       }
     }
   ],
   "routes": [
-    { "src": "/api/(.*)", "dest": "server/index.js" },
-    { "src": "/uploads/(.*)", "dest": "server/index.js" },
-    { "handle": "filesystem" },
-    { "src": "/assets/(.*)", "dest": "/client/assets/$1" },
-    { "src": "/favicon.svg", "dest": "/client/favicon.svg" },
-    { "src": "/icons.svg", "dest": "/client/icons.svg" },
-    { "src": "/(.*)", "dest": "/client/index.html" }
+    { "src": "/(.*)", "dest": "server/index.js" }
   ]
 }
