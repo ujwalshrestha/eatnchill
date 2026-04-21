@@ -28,11 +28,19 @@
     },
     {
       "source": "/assets/(.*)",
-      "destination": "/assets/$1"
+      "destination": "/client/assets/$1"
     },
     {
-      "source": "/((?!api|uploads|assets).*)",
-      "destination": "/index.html"
+      "source": "/favicon.svg",
+      "destination": "/client/favicon.svg"
+    },
+    {
+      "source": "/icons.svg",
+      "destination": "/client/icons.svg"
+    },
+    {
+      "source": "/((?!api|uploads|assets|favicon|icons).*)",
+      "destination": "/client/index.html"
     }
   ]
 }
