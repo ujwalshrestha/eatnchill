@@ -17,30 +17,12 @@
       }
     }
   ],
-  "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "server/index.js"
-    },
-    {
-      "source": "/uploads/(.*)",
-      "destination": "server/index.js"
-    },
-    {
-      "source": "/assets/(.*)",
-      "destination": "/client/assets/$1"
-    },
-    {
-      "source": "/favicon.svg",
-      "destination": "/client/favicon.svg"
-    },
-    {
-      "source": "/icons.svg",
-      "destination": "/client/icons.svg"
-    },
-    {
-      "source": "/((?!api|uploads|assets|favicon|icons).*)",
-      "destination": "/client/index.html"
-    }
+  "routes": [
+    { "src": "/api/(.*)", "dest": "server/index.js" },
+    { "src": "/uploads/(.*)", "dest": "server/index.js" },
+    { "src": "/assets/(.*)", "dest": "/client/assets/$1" },
+    { "src": "/favicon.svg", "dest": "/client/favicon.svg" },
+    { "src": "/icons.svg", "dest": "/client/icons.svg" },
+    { "src": "/(.*)", "dest": "/client/index.html" }
   ]
 }
