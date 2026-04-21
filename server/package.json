@@ -1,0 +1,17 @@
+{
+  "name": "restaurant-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch index.js",
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "multer": "^2.0.1",
+    "qrcode": "^1.5.4",
+    "sql.js": "^1.11.0"
+  }
+}
