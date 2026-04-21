@@ -38,6 +38,15 @@ app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'Restaurant API is running 🍽️', timestamp: new Date().toISOString() });
 });
 
+// Serve frontend in production
+if (process.env.NODE_ENV === 'production') {
+  const clientDist = join(__dirname, '..', 'client', 'dist');
+  app.use(express.static(clientDist));
+  app.get('*', (req, res) => {
+    res.sendFile(join(clientDist, 'index.html'));
+  });
+}
+
 app.use(errorHandler);
 
 // Initialize DB then start server

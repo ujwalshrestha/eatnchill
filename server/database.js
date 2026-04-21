@@ -6,8 +6,8 @@ import fs from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const DB_PATH = join(__dirname, 'data', 'restaurant.db');
-const dataDir = join(__dirname, 'data');
+const DB_DIR = process.env.DB_DIRECTORY || join(__dirname, 'data');
+const DB_PATH = join(DB_DIR, 'restaurant.db');
 
 let wrapper = null;
 
@@ -96,8 +96,8 @@ class DBWrapper {
 }
 
 export async function initDatabase() {
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
+  if (!fs.existsSync(DB_DIR)) {
+    fs.mkdirSync(DB_DIR, { recursive: true });
   }
 
   const SQL = await initSqlJs();

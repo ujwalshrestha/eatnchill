@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: eatnchill-qr-system
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DB_DIRECTORY
+        value: /data
+    disk:
+      name: sqlite-data
+      mountPath: /data
+      sizeGB: 1
