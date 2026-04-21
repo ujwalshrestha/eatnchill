@@ -1,9 +1,13 @@
 {
   "version": 2,
+  "cleanUrls": true,
   "builds": [
     {
       "src": "server/index.js",
-      "use": "@vercel/node"
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": ["../legacy_dump.sql"]
+      }
     },
     {
       "src": "client/package.json",
@@ -13,22 +17,22 @@
       }
     }
   ],
-  "routes": [
+  "rewrites": [
     {
-      "src": "/api/(.*)",
-      "dest": "server/index.js"
+      "source": "/api/(.*)",
+      "destination": "server/index.js"
     },
     {
-      "src": "/uploads/(.*)",
-      "dest": "server/index.js"
+      "source": "/uploads/(.*)",
+      "destination": "server/index.js"
     },
     {
-      "src": "/assets/(.*)",
-      "dest": "/client/dist/assets/$1"
+      "source": "/assets/(.*)",
+      "destination": "/client/dist/assets/$1"
     },
     {
-      "src": "/((?!api|uploads|assets).*)",
-      "dest": "/client/dist/index.html"
+      "source": "/((?!api|uploads|assets).*)",
+      "destination": "/client/dist/index.html"
     }
   ]
 }

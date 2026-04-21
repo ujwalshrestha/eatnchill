@@ -21,7 +21,7 @@ A modern, real-time, QR-code based ordering system custom-built for "Eat N Chill
 
 *   **Frontend**: React 19 (Vite), React Router DOM, strict Vanilla CSS architecture.
 *   **Backend**: Node.js, Express.js.
-*   **Database**: SQLite (via `sql.js` for fast local data handling).
+*   **Database**: Turso (Cloud SQLite via `@libsql/client`) for free, permanent hosting.
 *   **Real-Time**: Server-Sent Events (SSE) for zero-dependency live updates.
 
 ---
@@ -29,37 +29,30 @@ A modern, real-time, QR-code based ordering system custom-built for "Eat N Chill
 ## Local Setup & Development 🚀
 
 ### 1. Prerequisites
-Ensure you have [Node.js](https://nodejs.org/) installed.
+Ensure you have [Node.js](https://nodejs.org/) installed and a [Turso](https://turso.tech/) database created.
 
-### 2. Install Dependencies
+### 2. Environment Variables
+Create a `.env` file in the `server` directory:
+```env
+TURSO_DATABASE_URL=your_database_url
+TURSO_AUTH_TOKEN=your_auth_token
+```
+
+### 3. Install Dependencies
 You need to install dependencies for both the client and the server.
 
 ```bash
-# Install Server Dependencies
-cd server
-npm install
-
-# Install Client Dependencies
-cd ../client
+# Install Everything (from root)
 npm install
 ```
 
-### 3. Run the Servers
-Open two terminal windows to run both servers simultaneously.
-
-**Terminal 1 (Backend - Port 3001):**
+### 4. Run the Servers
+Open a terminal and run from the root:
 ```bash
-cd server
 npm run dev
 ```
 
-**Terminal 2 (Frontend - Port 5173):**
-```bash
-cd client
-npm run dev
-```
-
-### 4. Access the Application
+### 5. Access the Application
 *   **Customer Portal**: `http://localhost:5173/` (Optionally `/table/T1`)
 *   **Admin Dashboard**: `http://localhost:5173/admin`
     *   **Username**: `eatnchill`
@@ -69,6 +62,10 @@ npm run dev
 
 ## Deployment Architecture ☁️
 
-If you plan to deploy this project:
-1.  **Frontend**: Can be deployed seamlessly as a Static Site to Vercel, Netlify, or Cloudflare Pages.
-2.  **Backend**: Because it relies on a local SQLite database file, it **must** be deployed to a persistent server (like Render, Railway, or Heroku). Deploying the backend to Vercel Serverless Functions will result in a read-only filesystem error preventing orders from saving.
+This project is optimized for a **100% Free Hosting** strategy:
+
+1.  **Entire Project**: Can be deployed to **Vercel** using the root `vercel.json`.
+2.  **Database**: Hosted on **Turso** (SQLite in the cloud).
+3.  **Vercel Configuration**: The backend runs as Serverless Functions, while the frontend is served as static assets.
+
+**IMPORTANT**: Ensure you add `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` to your Vercel Project Environment Variables.
