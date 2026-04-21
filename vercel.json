@@ -28,11 +28,11 @@
     },
     {
       "source": "/assets/(.*)",
-      "destination": "/client/dist/assets/$1"
+      "destination": "/assets/$1"
     },
     {
       "source": "/((?!api|uploads|assets).*)",
-      "destination": "/client/dist/index.html"
+      "destination": "/index.html"
     }
   ]
 }
