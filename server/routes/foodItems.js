@@ -1,15 +1,15 @@
 import { Router } from 'express';
 import { getDb } from '../database.js';
-import { AppError } from '../middleware/errorHandler.js';
+import { AppError, asyncHandler } from '../middleware/errorHandler.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const db = getDb();
   const { available_only } = req.query;
   const where = available_only === 'true' ? 'WHERE f.is_available = 1 AND c.is_active = 1' : '';
   
-  const items = db.prepare(`
+  const items = await db.prepare(`
     SELECT f.*, c.name as category_name 
     FROM food_items f
     JOIN categories c ON f.category_id = c.id
@@ -17,31 +17,31 @@ router.get('/', (req, res) => {
     ORDER BY c.sort_order ASC, f.sort_order ASC
   `).all();
 
-  // Attach options to each item
-  const itemsWithOptions = items.map(item => {
-    const options = db.prepare('SELECT * FROM item_options WHERE food_item_id = ? AND is_active = 1').all(item.id);
+  // Attach options to each item using Promise.all
+  const itemsWithOptions = await Promise.all(items.map(async item => {
+    const options = await db.prepare('SELECT * FROM item_options WHERE food_item_id = ? AND is_active = 1').all(item.id);
     return { ...item, options };
-  });
+  }));
 
   res.json({ success: true, data: itemsWithOptions });
-});
+}));
 
-router.get('/:id', (req, res) => {
+router.get('/:id', asyncHandler(async (req, res) => {
   const db = getDb();
-  const item = db.prepare('SELECT * FROM food_items WHERE id = ?').get(parseInt(req.params.id));
+  const item = await db.prepare('SELECT * FROM food_items WHERE id = ?').get(parseInt(req.params.id));
   if (!item) throw new AppError('Item not found', 404);
   
-  const options = db.prepare('SELECT * FROM item_options WHERE food_item_id = ?').all(item.id);
+  const options = await db.prepare('SELECT * FROM item_options WHERE food_item_id = ?').all(item.id);
   res.json({ success: true, data: { ...item, options } });
-});
+}));
 
-router.post('/', (req, res) => {
+router.post('/', asyncHandler(async (req, res) => {
   const db = getDb();
   const { category_id, name, description, price, image_url, is_available = 1, sort_order = 0, options = [] } = req.body;
   
   if (!category_id || !name || price === undefined) throw new AppError('Category, name and price are required');
 
-  const result = db.prepare(
+  const result = await db.prepare(
     'INSERT INTO food_items (category_id, name, description, price, image_url, is_available, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)'
   ).run(category_id, name, description, price, image_url, is_available, sort_order);
 
@@ -50,17 +50,19 @@ router.post('/', (req, res) => {
   // Save options if provided
   if (options && options.length > 0) {
     const stmt = db.prepare('INSERT INTO item_options (food_item_id, name, price) VALUES (?, ?, ?)');
-    options.forEach(opt => stmt.run(itemId, opt.name, opt.price || 0));
+    for (const opt of options) {
+      await stmt.run(itemId, opt.name, opt.price || 0);
+    }
   }
 
-  const newItem = db.prepare('SELECT * FROM food_items WHERE id = ?').get(itemId);
+  const newItem = await db.prepare('SELECT * FROM food_items WHERE id = ?').get(itemId);
   res.status(201).json({ success: true, data: newItem });
-});
+}));
 
-router.put('/:id', (req, res) => {
+router.put('/:id', asyncHandler(async (req, res) => {
   const db = getDb();
   const id = parseInt(req.params.id);
-  const existing = db.prepare('SELECT id FROM food_items WHERE id = ?').get(id);
+  const existing = await db.prepare('SELECT id FROM food_items WHERE id = ?').get(id);
   if (!existing) throw new AppError('Item not found', 404);
 
   const { category_id, name, description, price, image_url, is_available, sort_order, options } = req.body;
@@ -77,25 +79,27 @@ router.put('/:id', (req, res) => {
 
   if (updates.length > 0) {
     params.push(id);
-    db.prepare(`UPDATE food_items SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    await db.prepare(`UPDATE food_items SET ${updates.join(', ')} WHERE id = ?`).run(...params);
   }
 
-  // Handle options update (simple sync: delete and re-add for this demo)
+  // Handle options update
   if (options !== undefined) {
-    db.prepare('DELETE FROM item_options WHERE food_item_id = ?').run(id);
+    await db.prepare('DELETE FROM item_options WHERE food_item_id = ?').run(id);
     const stmt = db.prepare('INSERT INTO item_options (food_item_id, name, price, is_active) VALUES (?, ?, ?, ?)');
-    options.forEach(opt => stmt.run(id, opt.name, opt.price || 0, opt.is_active !== undefined ? opt.is_active : 1));
+    for (const opt of options) {
+      await stmt.run(id, opt.name, opt.price || 0, opt.is_active !== undefined ? opt.is_active : 1);
+    }
   }
 
-  const updated = db.prepare('SELECT * FROM food_items WHERE id = ?').get(id);
+  const updated = await db.prepare('SELECT * FROM food_items WHERE id = ?').get(id);
   res.json({ success: true, data: updated });
-});
+}));
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', asyncHandler(async (req, res) => {
   const db = getDb();
   const id = parseInt(req.params.id);
-  db.prepare('DELETE FROM food_items WHERE id = ?').run(id);
+  await db.prepare('DELETE FROM food_items WHERE id = ?').run(id);
   res.json({ success: true, message: 'Item deleted' });
-});
+}));
 
 export default router;

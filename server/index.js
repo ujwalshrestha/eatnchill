@@ -49,16 +49,19 @@ if (process.env.NODE_ENV === 'production') {
 
 app.use(errorHandler);
 
-// Initialize DB then start server
-async function start() {
+// Initialize DB for all environments (Top-level await)
+try {
   await initDatabase();
+  console.log('✅ Database connected and initialized');
+} catch (err) {
+  console.error('❌ Database initialization failed:', err);
+}
+
+if (process.env.VERCEL !== '1') {
   app.listen(PORT, () => {
     console.log(`\n🍽️  Restaurant API Server running on http://localhost:${PORT}`);
     console.log(`📋 Health check: http://localhost:${PORT}/api/health\n`);
   });
 }
 
-start().catch(err => {
-  console.error('Failed to start server:', err);
-  process.exit(1);
-});
+export default app;

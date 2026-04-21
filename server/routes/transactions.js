@@ -1,14 +1,15 @@
 import { Router } from 'express';
 import { getDb } from '../database.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
 
 const router = Router();
 
-router.get('/daily', (req, res) => {
+router.get('/daily', asyncHandler(async (req, res) => {
   const db = getDb();
   const { date } = req.query;
   const targetDate = date || new Date().toISOString().split('T')[0];
 
-  const summary = db.prepare(`
+  const summary = await db.prepare(`
     SELECT
       COUNT(*) as total_orders,
       COALESCE(SUM(total_amount), 0) as total_revenue,
@@ -21,7 +22,7 @@ router.get('/daily', (req, res) => {
     WHERE date(created_at) = date(?)
   `).get(targetDate);
 
-  const categoryBreakdown = db.prepare(`
+  const categoryBreakdown = await db.prepare(`
     SELECT
       c.name as category_name,
       SUM(oi.quantity) as items_sold,
@@ -35,7 +36,7 @@ router.get('/daily', (req, res) => {
     ORDER BY revenue DESC
   `).all(targetDate);
 
-  const tableBreakdown = db.prepare(`
+  const tableBreakdown = await db.prepare(`
     SELECT
       t.table_number,
       COUNT(o.id) as order_count,
@@ -47,7 +48,7 @@ router.get('/daily', (req, res) => {
     ORDER BY revenue DESC
   `).all(targetDate);
 
-  const topItems = db.prepare(`
+  const topItems = await db.prepare(`
     SELECT
       f.name,
       f.price,
@@ -62,7 +63,7 @@ router.get('/daily', (req, res) => {
     LIMIT 10
   `).all(targetDate);
 
-  const hourlyBreakdown = db.prepare(`
+  const hourlyBreakdown = await db.prepare(`
     SELECT
       strftime('%H', created_at) as hour,
       COUNT(*) as order_count,
@@ -73,7 +74,7 @@ router.get('/daily', (req, res) => {
     ORDER BY hour ASC
   `).all(targetDate);
 
-  const orders = db.prepare(`
+  const orders = await db.prepare(`
     SELECT o.*, t.table_number
     FROM orders o
     LEFT JOIN tables_config t ON t.id = o.table_id
@@ -85,16 +86,16 @@ router.get('/daily', (req, res) => {
     success: true,
     data: { date: targetDate, summary, categoryBreakdown, tableBreakdown, topItems, hourlyBreakdown, orders },
   });
-});
+}));
 
-router.get('/range', (req, res) => {
+router.get('/range', asyncHandler(async (req, res) => {
   const db = getDb();
   const { start_date, end_date } = req.query;
   if (!start_date || !end_date) {
     return res.status(400).json({ success: false, error: 'start_date and end_date are required' });
   }
 
-  const dailySummaries = db.prepare(`
+  const dailySummaries = await db.prepare(`
     SELECT
       date(created_at) as date,
       COUNT(*) as total_orders,
@@ -107,6 +108,6 @@ router.get('/range', (req, res) => {
   `).all(start_date, end_date);
 
   res.json({ success: true, data: dailySummaries });
-});
+}));
 
 export default router;
