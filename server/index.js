@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import fs from 'fs';
 
-import { initDatabase } from './database.js';
+import { getDb, initDatabase } from './database.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import categoriesRouter from './routes/categories.js';
 import foodItemsRouter from './routes/foodItems.js';
@@ -43,6 +43,38 @@ app.use('/api/transactions', transactionsRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'Restaurant API is running 🍽️', timestamp: new Date().toISOString() });
+});
+
+// Safe diagnostics endpoint (does not reveal secrets).
+app.get('/api/db-info', async (req, res) => {
+  try {
+    const tursoUrl = process.env.TURSO_DATABASE_URL || '';
+    const isTurso = Boolean(tursoUrl) && !tursoUrl.startsWith('file:');
+    const urlHost = tursoUrl ? tursoUrl.split('://')[1]?.split('/')[0] || '' : '';
+
+    const db = getDb();
+    const [{ cnt: categories = 0 } = {}] = await db.prepare('SELECT COUNT(*) AS cnt FROM categories').all();
+    const [{ cnt: foodItems = 0 } = {}] = await db.prepare('SELECT COUNT(*) AS cnt FROM food_items').all();
+    const [{ cnt: orders = 0 } = {}] = await db.prepare('SELECT COUNT(*) AS cnt FROM orders').all();
+
+    res.json({
+      success: true,
+      db: {
+        provider: isTurso ? 'turso' : 'sqlite',
+        urlHost: isTurso ? urlHost : 'local',
+        hasAuthToken: Boolean(process.env.TURSO_AUTH_TOKEN),
+      },
+      counts: { categories, foodItems, orders },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: 'DB diagnostics failed',
+      error: err?.message || String(err),
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
 // Serve the built frontend anywhere a production bundle is available.
