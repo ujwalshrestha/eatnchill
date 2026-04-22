@@ -32,6 +32,22 @@ export default function CustomerLayout() {
     loadTable();
   }, [tableId]);
 
+  // Periodically refresh the session to keep it alive
+  useEffect(() => {
+    if (!session?.id) return;
+
+    const refreshInterval = setInterval(async () => {
+      try {
+        const sessionRes = await api.startTableSession(tableId);
+        setSession(sessionRes.data);
+      } catch (err) {
+        console.error('Failed to refresh session:', err);
+      }
+    }, 5 * 60 * 1000); // Refresh every 5 minutes
+
+    return () => clearInterval(refreshInterval);
+  }, [session?.id, tableId]);
+
   async function ensureSession() {
     const res = await api.startTableSession(tableId);
     setSession(res.data);

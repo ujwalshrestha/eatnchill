@@ -103,7 +103,17 @@ export default function Menu({ table, session, ensureSession, onOrderPlaced }) {
     if (cart.length === 0) return;
     setPlacingOrder(true);
     try {
-      const activeSession = session?.id ? session : await ensureSession();
+      // Always ensure a fresh session before placing order
+      // This handles cases where the session might have expired while browsing
+      let activeSession = session;
+      if (!activeSession?.id) {
+        activeSession = await ensureSession();
+      }
+      
+      if (!activeSession?.id) {
+        throw new Error('Unable to create a table session. Please refresh and try again.');
+      }
+
       const res = await api.createOrder({
         table_id: table.id,
         session_id: activeSession.id,
