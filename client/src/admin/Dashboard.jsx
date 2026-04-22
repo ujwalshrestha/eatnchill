@@ -1,23 +1,57 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { api } from '../api/client'
 
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [recentOrders, setRecentOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const refreshTimerRef = useRef(null);
+  const refreshInFlightRef = useRef(false);
+  const refreshQueuedRef = useRef(false);
 
   useEffect(() => {
-    loadData();
+    scheduleRefresh({ immediate: true });
     // SSE for real-time orders
     const eventSource = new EventSource('/api/orders/stream');
     eventSource.onmessage = (e) => {
       const data = JSON.parse(e.data);
       if (data.type === 'new_order' || data.type === 'status_update') {
-        loadData();
+        scheduleRefresh();
       }
     };
-    return () => eventSource.close();
+    return () => {
+      eventSource.close();
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    };
   }, []);
+
+  function scheduleRefresh({ immediate = false } = {}) {
+    // Most-accurate strategy: always re-fetch from the server, but debounce
+    // to avoid duplicate refreshes (button click + SSE + multiple SSE events).
+    refreshQueuedRef.current = true;
+    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    refreshTimerRef.current = setTimeout(() => {
+      refreshTimerRef.current = null;
+      void loadDataDebounced();
+    }, immediate ? 0 : 700);
+  }
+
+  async function loadDataDebounced() {
+    if (refreshInFlightRef.current) return;
+    if (!refreshQueuedRef.current) return;
+    refreshQueuedRef.current = false;
+
+    refreshInFlightRef.current = true;
+    try {
+      await loadData();
+    } finally {
+      refreshInFlightRef.current = false;
+      // If another refresh was queued while we were fetching, run again once.
+      if (refreshQueuedRef.current) {
+        scheduleRefresh({ immediate: true });
+      }
+    }
+  }
 
   async function loadData() {
     try {
@@ -46,7 +80,7 @@ export default function Dashboard() {
   async function handleStatusChange(orderId, status) {
     try {
       await api.updateOrderStatus(orderId, status);
-      loadData();
+      scheduleRefresh();
     } catch (err) {
       console.error(err);
     }
