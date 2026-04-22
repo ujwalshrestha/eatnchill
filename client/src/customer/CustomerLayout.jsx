@@ -8,7 +8,6 @@ export default function CustomerLayout() {
   const { tableId } = useParams();
   const navigate = useNavigate();
   const [table, setTable] = useState(null);
-  const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [orderId, setOrderId] = useState(null);
 
@@ -20,39 +19,14 @@ export default function CustomerLayout() {
           throw new Error('This table is currently inactive.');
         }
         setTable(res.data);
-        const sessionRes = await api.startTableSession(tableId);
-        setSession(sessionRes.data);
       } catch (err) {
         console.error('Failed to load table:', err);
-        // If table doesn't exist or is inactive, we could redirect or show error
       } finally {
         setLoading(false);
       }
     }
     loadTable();
   }, [tableId]);
-
-  // Periodically refresh the session to keep it alive
-  useEffect(() => {
-    if (!session?.id) return;
-
-    const refreshInterval = setInterval(async () => {
-      try {
-        const sessionRes = await api.startTableSession(tableId);
-        setSession(sessionRes.data);
-      } catch (err) {
-        console.error('Failed to refresh session:', err);
-      }
-    }, 5 * 60 * 1000); // Refresh every 5 minutes
-
-    return () => clearInterval(refreshInterval);
-  }, [session?.id, tableId]);
-
-  async function ensureSession() {
-    const res = await api.startTableSession(tableId);
-    setSession(res.data);
-    return res.data;
-  }
 
   if (loading) return <div className="loading"><div className="spinner" /></div>;
 
@@ -90,8 +64,6 @@ export default function CustomerLayout() {
         ) : (
           <Menu
             table={table}
-            session={session}
-            ensureSession={ensureSession}
             onOrderPlaced={(id) => setOrderId(id)}
           />
         )}

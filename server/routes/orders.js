@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { getDb } from '../database.js';
 import { AppError, asyncHandler } from '../middleware/errorHandler.js';
-import { ensureTableSession, touchSession, validateSessionForTable } from '../sessionService.js';
 
 const router = Router();
 
@@ -88,27 +87,21 @@ async function getOrderItemsWithDetails(db, orderId) {
 
 router.post('/', asyncHandler(async (req, res) => {
   const db = getDb();
-  const { table_id, session_id, customer_name = '', notes = '', items } = req.body;
+  const { table_id, customer_name = '', notes = '', items } = req.body;
 
   if (!table_id) throw new AppError('Table ID is required');
   if (!items || !Array.isArray(items) || items.length === 0) throw new AppError('At least one item is required');
-  if (items.length === 0) throw new AppError('No items in order');
 
   const tableId = parseInt(table_id);
-  let activeSession;
-  if (session_id) {
-    activeSession = await validateSessionForTable(db, parseInt(session_id), tableId);
-    activeSession = await touchSession(db, activeSession.id);
-  } else {
-    const ensured = await ensureTableSession(db, tableId);
-    activeSession = ensured.session;
-  }
+  const table = await db.prepare('SELECT * FROM tables_config WHERE id = ?').get(tableId);
+  if (!table) throw new AppError('Table not found', 404);
+  if (!table.is_active) throw new AppError('This table is currently inactive.', 409);
 
   const orderResult = await db.transaction(async (txDb) => {
-    // 1. Create order
+    // 1. Create order (without session_id)
     const result = await txDb.prepare(
-      'INSERT INTO orders (table_id, session_id, customer_name, notes, status) VALUES (?, ?, ?, ?, ?)'
-    ).run(tableId, activeSession.id, customer_name, notes, 'pending');
+      'INSERT INTO orders (table_id, customer_name, notes, status) VALUES (?, ?, ?, ?)'
+    ).run(tableId, customer_name, notes, 'pending');
     
     const orderId = result.lastInsertRowid;
     let totalAmount = 0;
@@ -151,9 +144,9 @@ router.post('/', asyncHandler(async (req, res) => {
     await txDb.prepare('UPDATE orders SET total_amount = ? WHERE id = ?').run(totalAmount, orderId);
 
     // 4. Get table number for broadcasting
-    const table = await txDb.prepare('SELECT table_number FROM tables_config WHERE id = ?').get(tableId);
+    const tableInfo = await txDb.prepare('SELECT table_number FROM tables_config WHERE id = ?').get(tableId);
 
-    return { orderId, tableNumber: table?.table_number, totalAmount, sessionId: activeSession.id };
+    return { orderId, tableNumber: tableInfo?.table_number, totalAmount };
   });
 
   const newOrder = await db.prepare('SELECT * FROM orders WHERE id = ?').get(orderResult.orderId);
@@ -161,7 +154,6 @@ router.post('/', asyncHandler(async (req, res) => {
   
   const fullOrder = {
     ...newOrder,
-    session_id: orderResult.sessionId,
     table_number: orderResult.tableNumber,
     items: itemsWithDetails,
   };

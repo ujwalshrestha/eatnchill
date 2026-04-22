@@ -2,14 +2,6 @@ import { Router } from 'express';
 import QRCode from 'qrcode';
 import { getDb } from '../database.js';
 import { AppError, asyncHandler } from '../middleware/errorHandler.js';
-import {
-  cleanupExpiredSessions,
-  closeSession,
-  ensureTableSession,
-  getCurrentSessionForTable,
-  getSessionTimeoutMinutes,
-  setSessionTimeoutMinutes,
-} from '../sessionService.js';
 
 const router = Router();
 
@@ -61,22 +53,17 @@ router.get('/qr/all', asyncHandler(async (req, res) => {
 }));
 
 router.get('/settings/session-timeout', asyncHandler(async (req, res) => {
-  const db = getDb();
-  const timeoutMinutes = await getSessionTimeoutMinutes(db);
-  res.json({ success: true, data: { session_timeout_minutes: timeoutMinutes } });
+  // Deprecated: Session timeout settings no longer used
+  res.json({ success: true, data: { session_timeout_minutes: 15 } });
 }));
 
 router.put('/settings/session-timeout', asyncHandler(async (req, res) => {
-  const db = getDb();
-  const timeoutMinutes = await setSessionTimeoutMinutes(db, req.body.session_timeout_minutes);
-  res.json({ success: true, data: { session_timeout_minutes: timeoutMinutes } });
+  // Deprecated: Session timeout settings no longer used
+  res.json({ success: true, data: { session_timeout_minutes: 15 } });
 }));
 
 router.get('/', asyncHandler(async (req, res) => {
   const db = getDb();
-  await cleanupExpiredSessions(db);
-
-  const timeoutMinutes = await getSessionTimeoutMinutes(db);
   const tables = await db.prepare(`
     SELECT t.*,
       (SELECT COUNT(*) FROM orders o WHERE o.table_id = t.id AND o.status IN ('pending', 'preparing', 'ready')) as active_orders
@@ -84,73 +71,15 @@ router.get('/', asyncHandler(async (req, res) => {
     ORDER BY LENGTH(t.table_number) ASC, t.table_number ASC
   `).all();
 
-  const tablesWithSessions = await Promise.all(tables.map(async (table) => {
-    const currentSession = await getCurrentSessionForTable(db, table.id);
-    return {
-      ...table,
-      current_session_id: currentSession?.id || null,
-      current_session_status: currentSession?.status || null,
-      current_session_started_at: currentSession?.started_at || null,
-      current_session_expires_at: currentSession?.expires_at || null,
-      session_timeout_minutes: timeoutMinutes,
-    };
-  }));
-
-  res.json({ success: true, data: tablesWithSessions });
+  res.json({ success: true, data: tables });
 }));
 
 router.get('/:id', asyncHandler(async (req, res) => {
   const db = getDb();
-  await cleanupExpiredSessions(db);
   const table = await db.prepare('SELECT * FROM tables_config WHERE id = ?').get(parseInt(req.params.id));
   if (!table) throw new AppError('Table not found', 404);
 
-  const timeoutMinutes = await getSessionTimeoutMinutes(db);
-  const currentSession = await getCurrentSessionForTable(db, table.id);
-
-  res.json({
-    success: true,
-    data: {
-      ...table,
-      current_session_id: currentSession?.id || null,
-      current_session_status: currentSession?.status || null,
-      current_session_started_at: currentSession?.started_at || null,
-      current_session_expires_at: currentSession?.expires_at || null,
-      session_timeout_minutes: timeoutMinutes,
-    },
-  });
-}));
-
-router.post('/:id/session', asyncHandler(async (req, res) => {
-  const db = getDb();
-  const tableId = parseInt(req.params.id);
-  const { session, timeoutMinutes, created } = await ensureTableSession(db, tableId);
-
-  res.json({
-    success: true,
-    data: {
-      ...session,
-      timeout_minutes: timeoutMinutes,
-      created,
-    },
-  });
-}));
-
-router.post('/:id/session/reset', asyncHandler(async (req, res) => {
-  const db = getDb();
-  const tableId = parseInt(req.params.id);
-  const table = await db.prepare('SELECT * FROM tables_config WHERE id = ?').get(tableId);
-  if (!table) throw new AppError('Table not found', 404);
-
-  const currentSession = await getCurrentSessionForTable(db, tableId);
-  if (currentSession) {
-    await closeSession(db, currentSession.id, 'closed');
-  }
-
-  res.json({
-    success: true,
-    message: currentSession ? 'Table session reset.' : 'No active session to reset.',
-  });
+  res.json({ success: true, data: table });
 }));
 
 router.post('/', asyncHandler(async (req, res) => {
