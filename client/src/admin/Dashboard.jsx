@@ -21,9 +21,10 @@ export default function Dashboard() {
 
   async function loadData() {
     try {
+      const today = new Date().toISOString().split('T')[0];
       const [txRes, ordersRes, tablesRes, categoriesRes] = await Promise.all([
         api.getDailyTransactions(),
-        api.getOrders('limit=10'),
+        api.getOrders(`date=${today}&limit=10`),
         api.getTables(),
         api.getCategories(),
       ]);
