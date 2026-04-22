@@ -4,6 +4,7 @@ import { dirname, join } from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
 import { DEFAULT_SESSION_TIMEOUT_MINUTES } from './sessionService.js';
+import { extractInsertObjects } from './legacySqlParser.js';
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -192,79 +193,36 @@ export async function initDatabase() {
 
 // --- Legacy Data Migration ---
 async function seedFromLegacySQL() {
-  const sqlPath = join(__dirname, '..', 'legacy_dump.sql');
+  const tursoUrl = process.env.TURSO_DATABASE_URL || '';
+  const isTurso = Boolean(tursoUrl) && !tursoUrl.startsWith('file:');
+  const shouldSkipHeavySeedOnVercel = process.env.VERCEL === '1' && isTurso && process.env.LEGACY_SEED_ON_START !== '1';
+
+  const sqlPath = process.env.LEGACY_SQL_PATH
+    ? join(__dirname, '..', process.env.LEGACY_SQL_PATH)
+    : join(__dirname, '..', 'legacy_dump.sql');
   if (!fs.existsSync(sqlPath)) return;
 
   const sql = fs.readFileSync(sqlPath, 'utf8');
   console.log('📖 Parsing legacy_dump.sql...');
 
-  function getInsertValues(tableName) {
-    const regex = new RegExp(`INSERT INTO \`${tableName}\` \\([^)]+\\) VALUES\\s+([\\s\\S]+?);`, 'gi');
-    let match;
-    const allRows = [];
-
-    while ((match = regex.exec(sql)) !== null) {
-      const valuesStr = match[1].trim();
-      let currentRow = "";
-      let inString = false;
-      let parenDepth = 0;
-
-      for (let i = 0; i < valuesStr.length; i++) {
-        const char = valuesStr[i];
-        if (char === "'" && valuesStr[i - 1] !== "\\") inString = !inString;
-        if (!inString) {
-          if (char === "(") parenDepth++;
-          if (char === ")") parenDepth--;
-        }
-        currentRow += char;
-        if (!inString && parenDepth === 0 && (char === "," || i === valuesStr.length - 1)) {
-          let cleaned = currentRow.trim();
-          if (cleaned.endsWith(',')) cleaned = cleaned.slice(0, -1).trim();
-          if (cleaned.startsWith('(') && cleaned.endsWith(')')) {
-            allRows.push(parseRow(cleaned.slice(1, -1)));
-          }
-          currentRow = "";
-        }
-      }
-    }
-    return allRows;
-  }
-
-  function parseRow(rowStr) {
-    const cols = [];
-    let cur = "";
-    let inStr = false;
-    for (let i = 0; i < rowStr.length; i++) {
-      const c = rowStr[i];
-      if (c === "'" && rowStr[i - 1] !== "\\") inStr = !inStr;
-      else if (c === "," && !inStr) {
-        cols.push(cur.trim());
-        cur = "";
-        continue;
-      }
-      cur += c;
-    }
-    cols.push(cur.trim());
-    return cols.map(c => c.replace(/^'|'$/g, '').replace(/\\'/g, "'"));
-  }
-
   const legacyCategories = [
-    ...getInsertValues('category'),
-    ...getInsertValues('categories'),
+    ...extractInsertObjects(sql, 'category'),
+    ...extractInsertObjects(sql, 'categories'),
   ];
   const legacyProducts = [
-    ...getInsertValues('product'),
-    ...getInsertValues('products'),
+    ...extractInsertObjects(sql, 'product'),
+    ...extractInsertObjects(sql, 'products'),
   ];
   const legacyOptions = [
-    ...getInsertValues('product_option'),
-    ...getInsertValues('product_variants'),
+    ...extractInsertObjects(sql, 'product_option'),
+    ...extractInsertObjects(sql, 'product_variants'),
   ];
-  const legacyAdmin = getInsertValues('admin_login');
+  const legacyAdmin = extractInsertObjects(sql, 'admin_login');
 
   const adminQuery = await wrapper.prepare('SELECT COUNT(*) as cnt FROM admin').get();
   if (adminQuery.cnt === 0 && legacyAdmin.length > 0) {
-    const [id, username, password] = legacyAdmin[0];
+    const username = legacyAdmin[0].username || legacyAdmin[0].user || legacyAdmin[0].user_name;
+    const password = legacyAdmin[0].password;
     await wrapper.prepare('INSERT INTO admin (username, password) VALUES (?, ?)').run(username, password);
     console.log(`✅ Admin credentials set: ${username}`);
   }
@@ -272,17 +230,16 @@ async function seedFromLegacySQL() {
   const catQuery = await wrapper.prepare('SELECT COUNT(*) as cnt FROM categories').get();
   if (catQuery.cnt > 0) return; 
 
+  if (shouldSkipHeavySeedOnVercel) {
+    console.log('⏭️ Skipping legacy SQL import on Vercel (set LEGACY_SEED_ON_START=1 to enable).');
+    return;
+  }
+
   const legacyCatMapping = {}; 
   for (const row of legacyCategories) {
-    let c_id;
-    let name;
-    let sortOrder = 0;
-
-    if (row.length >= 3) {
-      [c_id, name, sortOrder] = row;
-    } else {
-      [c_id, , name] = row;
-    }
+    const c_id = row.categoryid ?? row.id ?? row.category_id;
+    const name = row.catname ?? row.name ?? row.category_name;
+    const sortOrder = row.priority ?? row.sort_order ?? 0;
 
     if (!name) continue;
 
@@ -297,18 +254,12 @@ async function seedFromLegacySQL() {
   const productOldToNewId = {};
 
   for (const row of legacyProducts) {
-    let p_id;
-    let cat_id;
-    let title;
-    let info;
-    let price;
-    let img;
-
-    if (row.length >= 8) {
-      [p_id, cat_id, title, info, , price, , img] = row;
-    } else {
-      [p_id, title, img, price, , info, cat_id] = row;
-    }
+    const p_id = row.productid ?? row.id ?? row.product_id;
+    const cat_id = row.categoryid ?? row.category_id ?? row.cat_id;
+    const title = row.productname ?? row.name ?? row.title;
+    const info = row.description ?? row.info ?? '';
+    const price = row.price ?? '0';
+    const img = row.photo ?? row.image ?? row.image_url ?? '';
 
     if (!title) continue;
 
@@ -332,7 +283,9 @@ async function seedFromLegacySQL() {
   console.log(`✅ Imported ${legacyProducts.length} products.`);
 
   for (const row of legacyOptions) {
-    const [v_id, prod_id, title, priceStr] = row;
+    const prod_id = row.product_id ?? row.productid ?? row.food_item_id;
+    const title = row.choice ?? row.title ?? row.name;
+    const priceStr = row.price ?? '0';
     const newProdId = productOldToNewId[prod_id];
     if (newProdId && title) {
       const optPrice = parseFloat(priceStr) || 0;
