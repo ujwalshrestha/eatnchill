@@ -49,4 +49,5 @@ export const api = {
 
   // Transactions
   getDailyTransactions: (date) => request(`/transactions/daily${date ? '?date=' + date : ''}`),
+  getDailyTransactionsSummary: (date) => request(`/transactions/daily/summary${date ? '?date=' + date : ''}`),
 };

@@ -42,17 +42,30 @@ router.get('/', asyncHandler(async (req, res) => {
   params.push(parseInt(limit));
 
   const orders = await db.prepare(query).all(...params);
+  if (orders.length === 0) {
+    res.json({ success: true, data: [] });
+    return;
+  }
 
-  // Fetch items for each order
-  const ordersWithItems = await Promise.all(orders.map(async order => {
-    const items = await db.prepare(`
-      SELECT oi.*, f.name, f.image_url
-      FROM order_items oi LEFT JOIN food_items f ON f.id = oi.food_item_id
-      WHERE oi.order_id = ?
-    `).all(order.id);
-    return { ...order, items };
-  }));
+  // Fetch all items for the returned orders in a single query (avoid N+1 on Turso).
+  const orderIds = orders.map(o => o.id);
+  const placeholders = orderIds.map(() => '?').join(',');
+  const items = await db.prepare(`
+    SELECT oi.*, f.name, f.image_url
+    FROM order_items oi
+    LEFT JOIN food_items f ON f.id = oi.food_item_id
+    WHERE oi.order_id IN (${placeholders})
+    ORDER BY oi.order_id ASC, oi.id ASC
+  `).all(...orderIds);
 
+  const itemsByOrderId = new Map();
+  for (const item of items) {
+    const list = itemsByOrderId.get(item.order_id) || [];
+    list.push(item);
+    itemsByOrderId.set(item.order_id, list);
+  }
+
+  const ordersWithItems = orders.map(order => ({ ...order, items: itemsByOrderId.get(order.id) || [] }));
   res.json({ success: true, data: ordersWithItems });
 }));
 

@@ -8,6 +8,7 @@ export default function Dashboard() {
   const refreshTimerRef = useRef(null);
   const refreshInFlightRef = useRef(false);
   const refreshQueuedRef = useRef(false);
+  const metaLoadedRef = useRef(false);
 
   useEffect(() => {
     scheduleRefresh({ immediate: true });
@@ -56,19 +57,28 @@ export default function Dashboard() {
   async function loadData() {
     try {
       const today = new Date().toISOString().split('T')[0];
-      const [txRes, ordersRes, tablesRes, categoriesRes] = await Promise.all([
-        api.getDailyTransactions(),
+      const [txRes, ordersRes] = await Promise.all([
+        api.getDailyTransactionsSummary(today),
         api.getOrders(`date=${today}&limit=10`),
-        api.getTables(),
-        api.getCategories(),
       ]);
-      setStats({
+
+      // These numbers don’t change on every order status update; load them once.
+      if (!metaLoadedRef.current) {
+        const [tablesRes, categoriesRes] = await Promise.all([api.getTables(), api.getCategories()]);
+        metaLoadedRef.current = true;
+        setStats(prev => ({
+          ...(prev || {}),
+          totalTables: tablesRes.data.length,
+          activeTables: tablesRes.data.filter(t => t.current_session_status === 'active').length,
+          totalCategories: categoriesRes.data.length,
+          totalItems: categoriesRes.data.reduce((sum, c) => sum + (c.item_count || 0), 0),
+        }));
+      }
+
+      setStats(prev => ({
+        ...(prev || {}),
         ...txRes.data.summary,
-        totalTables: tablesRes.data.length,
-        activeTables: tablesRes.data.filter(t => t.current_session_status === 'active').length,
-        totalCategories: categoriesRes.data.length,
-        totalItems: categoriesRes.data.reduce((sum, c) => sum + (c.item_count || 0), 0),
-      });
+      }));
       setRecentOrders(ordersRes.data);
     } catch (err) {
       console.error('Failed to load dashboard:', err);
@@ -80,7 +90,7 @@ export default function Dashboard() {
   async function handleStatusChange(orderId, status) {
     try {
       await api.updateOrderStatus(orderId, status);
-      scheduleRefresh();
+      scheduleRefresh({ immediate: true });
     } catch (err) {
       console.error(err);
     }

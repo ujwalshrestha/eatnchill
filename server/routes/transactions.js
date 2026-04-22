@@ -4,6 +4,28 @@ import { asyncHandler } from '../middleware/errorHandler.js';
 
 const router = Router();
 
+// Lightweight summary endpoint for dashboards (avoids computing full breakdowns).
+router.get('/daily/summary', asyncHandler(async (req, res) => {
+  const db = getDb();
+  const { date } = req.query;
+  const targetDate = date || new Date().toISOString().split('T')[0];
+
+  const summary = await db.prepare(`
+    SELECT
+      COUNT(*) as total_orders,
+      COALESCE(SUM(total_amount), 0) as total_revenue,
+      COALESCE(AVG(total_amount), 0) as avg_order_value,
+      COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_orders,
+      COUNT(CASE WHEN status = 'cancelled' THEN 1 END) as cancelled_orders,
+      COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_orders,
+      COUNT(CASE WHEN status = 'preparing' THEN 1 END) as preparing_orders
+    FROM orders
+    WHERE date(created_at) = date(?)
+  `).get(targetDate);
+
+  res.json({ success: true, data: { date: targetDate, summary } });
+}));
+
 router.get('/daily', asyncHandler(async (req, res) => {
   const db = getDb();
   const { date } = req.query;
